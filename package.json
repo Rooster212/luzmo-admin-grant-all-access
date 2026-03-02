@@ -1,0 +1,17 @@
+{
+  "name": "luzmo_admin_granter",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "grant": "node index.js"
+  },
+  "dependencies": {
+    "@luzmo/nodejs-sdk": "^2.1.1",
+    "dotenv": "^17.3.1"
+  }
+}
