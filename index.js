@@ -2,8 +2,10 @@
 
 import dotenv from "dotenv";
 import Luzmo from "@luzmo/nodejs-sdk";
-import readline from "readline";
-import https from "https";
+import { getOrganization } from "./organization.js";
+import { getUsers, getUserByEmail, promoteUserToAdmin, assignFullRights } from "./users.js";
+import { getGroups, updateGroupName, assignFullRightsToGroup } from "./groups.js";
+import { listAllSecurables } from "./securables.js";
 
 dotenv.config();
 
@@ -11,13 +13,37 @@ const API_KEY = process.env.LUZMO_API_KEY;
 const API_TOKEN = process.env.LUZMO_API_TOKEN;
 const TARGET_USER_ID = process.env.TARGET_USER_ID;
 const TARGET_ORG_ID = process.env.TARGET_ORG_ID;
+const TARGET_GROUP_ID = process.env.TARGET_GROUP_ID;
 
 const DRY_RUN = process.argv.includes("--dry-run");
 const GET_USERS = process.argv.includes("--get-users");
+const GET_GROUPS = process.argv.includes("--get-groups");
 const GET_ORG = process.argv.includes("--get-org");
 const GET_USER_BY_EMAIL = process.argv.includes("--get-user-by-email");
 const USER_EMAIL = process.argv[process.argv.indexOf("--get-user-by-email") + 1];
 const PROMOTE_USER_TO_ADMIN = process.argv.includes("--promote-user-to-admin");
+const ASSIGN_TO_GROUP = process.argv.includes("--assign-to-group");
+const UPDATE_GROUP_NAME = process.argv.includes("--update-group-name");
+
+// Parse group update arguments
+const UPDATE_GROUP_ID = process.argv.includes("--group-id")
+  ? process.argv[process.argv.indexOf("--group-id") + 1]
+  : null;
+const GROUP_NAME_EN = process.argv.includes("--name-en")
+  ? process.argv[process.argv.indexOf("--name-en") + 1]
+  : null;
+const GROUP_NAME_FR = process.argv.includes("--name-fr")
+  ? process.argv[process.argv.indexOf("--name-fr") + 1]
+  : null;
+const GROUP_NAME_NL = process.argv.includes("--name-nl")
+  ? process.argv[process.argv.indexOf("--name-nl") + 1]
+  : null;
+const GROUP_NAME_DE = process.argv.includes("--name-de")
+  ? process.argv[process.argv.indexOf("--name-de") + 1]
+  : null;
+const GROUP_NAME_ES = process.argv.includes("--name-es")
+  ? process.argv[process.argv.indexOf("--name-es") + 1]
+  : null;
 
 if (!API_KEY || !API_TOKEN) {
   console.error("Please set LUZMO_API_KEY and LUZMO_API_TOKEN.");
@@ -31,185 +57,70 @@ const client = new Luzmo({
   host: "https://api.luzmo.com",
 });
 
-// helper to fetch *all* securables
-async function listAllSecurables() {
-  let all = [];
-  let page = 0;
-  const pageSize = 100;
-  while (true) {
-    console.log(`Fetching page ${page + 1} (offset: ${page * pageSize})...`);
-    const res = await client.get("securable", {
-      limit: pageSize,
-      offset: page * pageSize,
-    });
-    console.log(`Response type: ${typeof res}, is array: ${Array.isArray(res)}`);
-    console.log(`Response keys: ${Object.keys(res)}`);
-
-    let items = [];
-    if (Array.isArray(res)) {
-      items = res;
-    } else if (res && res.rows && Array.isArray(res.rows)) {
-      items = res.rows;
-    }
-
-    console.log(`Got ${items.length} items on this page`);
-
-    if (items.length === 0) break;
-
-    items.forEach((item, idx) => {
-      console.log(`  [${all.length + idx}] ID: ${item.id}, Type: ${item.type}, Name: ${item.name}`);
-    });
-
-    all.push(...items);
-    if (items.length < pageSize) break;
-    page++;
-  }
-  return all;
-}
-
-async function getOrganization() {
-  try {
-    const org = await client.get("organization", {
-    });
-    console.log(org);
-  } catch (err) {
-    console.error(`Error fetching organization`, err.message || err);
-    throw err;
-  }
-}
-async function getUsers() {
-  try {
-    const org = await client.get("organization", {
-      where: { id: TARGET_ORG_ID },
-      include: [{ model: "User" }],
-    });
-    console.log(JSON.stringify(org.rows[0].users, null, 2));
-  } catch (err) {
-    console.error(`Error fetching users`, err.message || err);
-    throw err;
-  }
-}
-
-async function getUserByEmail(email) {
-  try {
-    const org = await client.get("organization", {
-      where: { id: TARGET_ORG_ID },
-      include: [{ model: "User" }],
-    });
-    const user = org.rows[0].users.find((u) => u.email === email);
-    if (user) {
-      console.log(JSON.stringify(user, null, 2));
-    } else {
-      console.log(`User with email "${email}" not found.`);
-    }
-  } catch (err) {
-    console.error(`Error fetching user by email`, err.message || err);
-    throw err;
-  }
-}
-
-async function promoteUserToAdmin(userId) {
-  try {
-    const payload = {
-      version: "0.1.0",
-      action: "associate",
-      key: API_KEY,
-      token: API_TOKEN,
-      id: userId,
-      resource: {
-        role: "Organizations",
-        id: TARGET_ORG_ID,
-      },
-      properties: {
-        flagMember: true,
-        flagEditor: true,
-        flagOwn: true,
-        flagAdmin: true,
-      },
-    };
-
-    const postData = JSON.stringify(payload);
-
-    const options = {
-      hostname: "api.luzmo.com",
-      port: 443,
-      path: "/0.1.0/user",
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(postData),
-      },
-    };
-
-    const result = await new Promise((resolve, reject) => {
-      const req = https.request(options, (res) => {
-        let data = "";
-        res.on("data", (chunk) => {
-          data += chunk;
-        });
-        res.on("end", () => {
-          if (res.statusCode >= 400) {
-            reject(new Error(`HTTP ${res.statusCode}: ${data}`));
-          } else {
-            resolve(JSON.parse(data));
-          }
-        });
-      });
-
-      req.on("error", reject);
-      req.write(postData);
-      req.end();
-    });
-
-    console.log(`✔ promoted user ${userId} to admin`);
-    console.log(JSON.stringify(result, null, 2));
-  } catch (err) {
-    console.error(`✖ error promoting user ${userId} to admin:`, err.message || err);
-    throw err;
-  }
-}
-
-// assign max rights
-async function assignFullRights(securable) {
-  const id = securable.id;
-  try {
-    await client.associate(
-      "securable",
-      id,
-      { role: "Users", id: TARGET_USER_ID },
-      {
-        flagRead: true,
-        flagUse: true,
-        flagModify: true,
-        flagOwn: true,
-      },
-    );
-    console.log(`✔ granted full rights on ${id}`);
-  } catch (err) {
-    console.error(`✖ error on ${id}:`, err.message || err);
-  }
-}
-
 (async () => {
   if (GET_ORG) {
-    await getOrganization();
+    await getOrganization(client);
   } else if (GET_USERS) {
     console.log("Fetching users...");
-    await getUsers();
+    await getUsers(client, TARGET_ORG_ID);
+  } else if (GET_GROUPS) {
+    console.log("Fetching groups...");
+    await getGroups(client);
   } else if (GET_USER_BY_EMAIL) {
     if (!USER_EMAIL) {
       console.error("Please provide an email: --get-user-by-email <email>");
       process.exit(1);
     }
     console.log(`Fetching user with email: ${USER_EMAIL}...`);
-    await getUserByEmail(USER_EMAIL);
+    await getUserByEmail(client, TARGET_ORG_ID, USER_EMAIL);
   } else if (PROMOTE_USER_TO_ADMIN) {
     if (!TARGET_USER_ID) {
       console.error("Please provide a user ID via TARGET_USER_ID environment variable.");
       process.exit(1);
     }
     console.log(`Promoting user ${TARGET_USER_ID} to admin...`);
-    await promoteUserToAdmin(TARGET_USER_ID);
+    await promoteUserToAdmin(API_KEY, API_TOKEN, TARGET_USER_ID, TARGET_ORG_ID);
+  } else if (UPDATE_GROUP_NAME) {
+    if (!UPDATE_GROUP_ID) {
+      console.error("Please provide a group ID with --group-id <id>");
+      process.exit(1);
+    }
+
+    const names = {};
+    if (GROUP_NAME_EN) names.en = GROUP_NAME_EN;
+    if (GROUP_NAME_FR) names.fr = GROUP_NAME_FR;
+    if (GROUP_NAME_NL) names.nl = GROUP_NAME_NL;
+    if (GROUP_NAME_DE) names.de = GROUP_NAME_DE;
+    if (GROUP_NAME_ES) names.es = GROUP_NAME_ES;
+
+    if (Object.keys(names).length === 0) {
+      console.error("Please provide at least one language name (--name-en, --name-fr, --name-nl, --name-de, --name-es)");
+      process.exit(1);
+    }
+
+    console.log(`Updating group ${UPDATE_GROUP_ID} with names:`, names);
+    await updateGroupName(client, UPDATE_GROUP_ID, names);
+  } else if (ASSIGN_TO_GROUP) {
+    if (!TARGET_GROUP_ID) {
+      console.error("Please set TARGET_GROUP_ID environment variable.");
+      process.exit(1);
+    }
+
+    console.log("Fetching securables...");
+    const securables = await listAllSecurables(client);
+    console.log(`Found ${securables.length} securables.`);
+
+    if (DRY_RUN) {
+      console.log("\n[DRY RUN MODE] Listing securables to assign to group:");
+      securables.forEach((sec) => {
+        console.log(`  - ID: ${sec.id}, Type: ${sec.type}, Name: ${sec.name}`);
+      });
+    } else {
+      console.log(`Assigning all securables to group ${TARGET_GROUP_ID}...`);
+      for (const sec of securables) {
+        await assignFullRightsToGroup(client, sec, TARGET_GROUP_ID);
+      }
+    }
   } else {
     if (!TARGET_USER_ID) {
       console.error("Please set TARGET_USER_ID.");
@@ -217,7 +128,7 @@ async function assignFullRights(securable) {
     }
 
     console.log("Fetching securables...");
-    const securables = await listAllSecurables();
+    const securables = await listAllSecurables(client);
     console.log(`Found ${securables.length} securables.`);
 
     if (DRY_RUN) {
@@ -227,7 +138,7 @@ async function assignFullRights(securable) {
       });
     } else {
       for (const sec of securables) {
-        await assignFullRights(sec);
+        await assignFullRights(client, sec, TARGET_USER_ID);
       }
     }
   }
